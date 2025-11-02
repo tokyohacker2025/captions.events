@@ -32,3 +32,7 @@ CREATE POLICY "Event creators can add captions"
       AND events.creator_id = auth.uid()
     )
   );
+
+-- Turn on realtime for the captions table
+alter publication supabase_realtime
+add table captions;

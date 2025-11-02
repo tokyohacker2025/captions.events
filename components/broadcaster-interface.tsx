@@ -54,12 +54,22 @@ export function BroadcasterInterface({
   const [partialText, setPartialText] = useState("");
   const sequenceNumberRef = useRef(0);
   const supabase = getSupabaseBrowserClient();
+  const broadcastChannelRef = useRef<any>(null);
 
   const scribe = useScribe({
     modelId: "scribe_realtime_v2",
     onPartialTranscript: (data) => {
       console.log("Partial:", data.text);
       setPartialText(data.text);
+
+      // Broadcast partial transcript to viewers via Realtime Broadcast
+      if (broadcastChannelRef.current) {
+        broadcastChannelRef.current.send({
+          type: "broadcast",
+          event: "partial_transcript",
+          payload: { text: data.text },
+        });
+      }
     },
     onFinalTranscript: async (data) => {
       console.log("Final:", data.text);
@@ -175,7 +185,7 @@ export function BroadcasterInterface({
     loadCaptions();
   }, [event.id, supabase]);
 
-  // Subscribe to realtime updates
+  // Subscribe to realtime updates and set up broadcast channel
   useEffect(() => {
     const channel = supabase
       .channel(`captions:${event.id}`)
@@ -203,6 +213,22 @@ export function BroadcasterInterface({
       supabase.removeChannel(channel);
     };
   }, [event.id, supabase]);
+
+  // Set up broadcast channel for partial transcripts
+  useEffect(() => {
+    const broadcastChannel = supabase
+      .channel(`broadcast:${event.uid}`)
+      .subscribe((status: string) => {
+        console.log("Broadcast channel status:", status);
+      });
+
+    broadcastChannelRef.current = broadcastChannel;
+
+    return () => {
+      supabase.removeChannel(broadcastChannel);
+      broadcastChannelRef.current = null;
+    };
+  }, [event.uid, supabase]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">

@@ -32,6 +32,7 @@ interface Caption {
 
 export function ViewerInterface({ event }: ViewerInterfaceProps) {
   const [captions, setCaptions] = useState<Caption[]>([]);
+  const [partialText, setPartialText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const supabase = getSupabaseBrowserClient();
 
@@ -57,7 +58,7 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
     loadCaptions();
   }, [event.id, supabase]);
 
-  // Subscribe to realtime updates
+  // Subscribe to realtime updates for final captions
   useEffect(() => {
     const channel = supabase
       .channel(`captions:${event.id}`)
@@ -71,6 +72,8 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
         },
         (payload: { new: Caption }) => {
           console.log("New caption received:", payload);
+          // Clear partial text when final caption arrives
+          setPartialText("");
           // Only add if we don't already have it (to avoid duplicates)
           setCaptions((prev) => {
             const exists = prev.some((c) => c.id === payload.new.id);
@@ -85,6 +88,27 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
       supabase.removeChannel(channel);
     };
   }, [event.id, supabase]);
+
+  // Subscribe to broadcast channel for partial transcripts
+  useEffect(() => {
+    const broadcastChannel = supabase
+      .channel(`broadcast:${event.uid}`)
+      .on(
+        "broadcast",
+        { event: "partial_transcript" },
+        (payload: { payload: { text: string } }) => {
+          console.log("Partial transcript received:", payload);
+          setPartialText(payload.payload.text);
+        }
+      )
+      .subscribe((status: string) => {
+        console.log("Broadcast channel status:", status);
+      });
+
+    return () => {
+      supabase.removeChannel(broadcastChannel);
+    };
+  }, [event.uid, supabase]);
 
   // Get the latest caption (most recent)
   const latestCaption =
@@ -126,7 +150,7 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="bg-background border-2 rounded-lg p-8 min-h-[200px] flex items-center justify-center">
+          <div className="bg-background border-2 rounded-lg p-8 min-h-[200px]">
             {isLoading ? (
               <div className="text-center space-y-3">
                 <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
@@ -134,11 +158,18 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
                   Loading captions...
                 </p>
               </div>
-            ) : latestCaption ? (
-              <div className="w-full">
-                <div className="text-2xl leading-relaxed text-center font-medium">
-                  {latestCaption.text}
-                </div>
+            ) : latestCaption || partialText ? (
+              <div className="w-full space-y-4">
+                {latestCaption && (
+                  <div className="text-2xl leading-relaxed text-center font-medium">
+                    {latestCaption.text}
+                  </div>
+                )}
+                {partialText && (
+                  <div className="text-2xl leading-relaxed text-center font-medium text-primary/70 italic">
+                    {partialText}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center space-y-3">
