@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Captions, Mic, Users, Zap } from "lucide-react";
+import { Captions, Mic, Users, Zap, Github } from "lucide-react";
 
 export default function HomePage() {
   return (
@@ -14,6 +14,16 @@ export default function HomePage() {
             <span className="font-bold text-xl">LiveCaptions</span>
           </div>
           <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" asChild>
+              <Link
+                href="https://github.com/thorwebdev/eleven-scribe-realtime-captions"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View source on GitHub"
+              >
+                <Github className="h-5 w-5" />
+              </Link>
+            </Button>
             <Button variant="ghost" asChild>
               <Link href="/auth/signin">Sign in</Link>
             </Button>
