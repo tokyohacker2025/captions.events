@@ -634,25 +634,40 @@ export function BroadcasterInterface({
         </CardContent>
       </Card>
 
-      {/* Powered by ElevenLabs Badge */}
-      <div className="flex justify-center py-4">
-        <a
-          href="https://elevenlabs.io"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group"
-        >
-          <Badge
-            variant="secondary"
-            className="px-4 py-2 text-sm transition-colors hover:bg-primary/10"
-          >
-            <span className="text-muted-foreground">Powered by</span>
-            <span className="ml-1.5 font-semibold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent group-hover:from-purple-500 group-hover:to-blue-500 transition-all">
-              ElevenLabs
-            </span>
-          </Badge>
-        </a>
-      </div>
+      {/* Powered By Banner */}
+      <section className="container mx-auto px-4 py-12">
+        <div className="flex justify-center">
+          <div className="flex items-center gap-3">
+            <Badge
+              variant="secondary"
+              className="px-4 py-2 text-sm transition-colors hover:bg-primary/10"
+            >
+              <span className="text-muted-foreground">Powered by</span>
+              <a
+                href="https://elevenlabs.io/speech-to-text"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group"
+              >
+                <span className="ml-1.5 font-semibold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent group-hover:from-purple-500 group-hover:to-blue-500 transition-all">
+                  ElevenLabs Scribe
+                </span>
+              </a>
+              <span className="text-muted-foreground">and</span>
+              <a
+                href="https://supabase.com/realtime"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group"
+              >
+                <span className="ml-1.5 font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent group-hover:from-emerald-500 group-hover:to-teal-500 transition-all">
+                  Supabase Realtime
+                </span>
+              </a>
+            </Badge>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
