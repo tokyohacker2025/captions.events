@@ -9,11 +9,19 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Eye, Languages, Loader2 } from "lucide-react";
+import { Eye, Languages } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { LANGUAGES } from "@/lib/languages";
 import { LanguageSelector } from "@/components/language-selector";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 interface Event {
   id: string;
@@ -83,18 +91,18 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
   const supabase = getSupabaseBrowserClient();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Translation state
   const [targetLanguage, setTargetLanguage] = useState("none");
-  const [sourceLanguage, setSourceLanguage] = useState("en"); // Default to English
+  const [sourceLanguage, setSourceLanguage] = useState("en");
   const [translatedCaptions, setTranslatedCaptions] = useState<
     Map<string, string>
   >(new Map());
-  const [translatedPartialText, setTranslatedPartialText] = useState("");
-  const [isTranslatorSupported, setIsTranslatorSupported] = useState(false);
-  const [isTranslating, setIsTranslating] = useState(false);
-  const [translationError, setTranslationError] = useState("");
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const translatorRef = useRef<Translator | null>(null);
+  const [eventLanguages, setEventLanguages] = useState<
+    { language_code: string; is_active: boolean }[]
+  >([]);
+  const [viewMode, setViewMode] = useState<"original" | "translation" | "both">(
+    "original"
+  );
+  const [inactiveNotice, setInactiveNotice] = useState(false);
 
   // Load existing captions on mount
   useEffect(() => {
@@ -204,160 +212,90 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
     };
   }, [event.uid, supabase]);
 
-  // Check if Translator API is supported
   useEffect(() => {
-    if (typeof window !== "undefined" && "Translator" in self) {
-      setIsTranslatorSupported(true);
-    }
-  }, []);
-
-  // Create translator when target language or source language changes
-  useEffect(() => {
-    const createTranslator = async () => {
-      // Clean up existing translator
-      if (translatorRef.current) {
-        translatorRef.current.destroy();
-        translatorRef.current = null;
-      }
-
-      // Reset states
-      setTranslationError("");
-      setDownloadProgress(null);
-      setTranslatedCaptions(new Map());
-      setTranslatedPartialText("");
-
-      // If no translation or not supported, return
-      if (targetLanguage === "none" || !isTranslatorSupported) {
-        return;
-      }
-
-      try {
-        setIsTranslating(true);
-
-        // Check availability using detected source language
-        const availability = await window.Translator!.availability({
-          sourceLanguage: sourceLanguage,
-          targetLanguage: targetLanguage,
-        });
-
-        console.log(
-          `Translator availability for ${sourceLanguage} -> ${targetLanguage}:`,
-          availability
-        );
-
-        // Create the translator with download progress monitoring
-        const translator = await window.Translator!.create({
-          sourceLanguage: sourceLanguage,
-          targetLanguage: targetLanguage,
-          monitor: (m) => {
-            m.addEventListener("downloadprogress", (e) => {
-              const progress = Math.round(e.loaded * 100);
-              console.log(`Translation model download: ${progress}%`);
-              setDownloadProgress(progress);
-            });
-          },
-        });
-
-        translatorRef.current = translator;
-        setDownloadProgress(null);
-
-        // Translate existing captions
-        await translateExistingCaptions(translator);
-
-        setIsTranslating(false);
-      } catch (error) {
-        console.error("Error creating translator:", error);
-        setTranslationError(
-          `Failed to initialize translator: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`
-        );
-        setIsTranslating(false);
-        setDownloadProgress(null);
-      }
+    const loadEventLanguages = async () => {
+      const { data } = await supabase
+        .from("event_translations")
+        .select("language_code,is_active")
+        .eq("event_id", event.id);
+      setEventLanguages(data || []);
     };
-
-    createTranslator();
-
-    // Cleanup on unmount or language change
+    loadEventLanguages();
+    const channel = supabase
+      .channel(`event_translations:${event.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "event_translations",
+          filter: `event_id=eq.${event.id}`,
+        },
+        () => loadEventLanguages()
+      )
+      .subscribe();
     return () => {
-      if (translatorRef.current) {
-        translatorRef.current.destroy();
-        translatorRef.current = null;
-      }
+      supabase.removeChannel(channel);
     };
-  }, [targetLanguage, sourceLanguage, isTranslatorSupported, captions]);
+  }, [event.id, supabase]);
 
-  // Function to translate existing captions
-  const translateExistingCaptions = async (translator: Translator) => {
-    const newTranslations = new Map<string, string>();
-
-    for (const caption of captions) {
-      try {
-        const translated = await translator.translate(caption.text);
-        newTranslations.set(caption.id, translated);
-      } catch (error) {
-        console.error(`Error translating caption ${caption.id}:`, error);
-      }
-    }
-
-    setTranslatedCaptions(newTranslations);
-  };
-
-  // Translate new captions as they arrive
   useEffect(() => {
-    if (
-      !translatorRef.current ||
-      targetLanguage === "none" ||
-      captions.length === 0
-    ) {
+    setTranslatedCaptions(new Map());
+    setInactiveNotice(false);
+    if (targetLanguage === "none") return;
+    const active = eventLanguages.find(
+      (l) => l.language_code === targetLanguage
+    )?.is_active;
+    if (!active) {
+      setInactiveNotice(true);
       return;
     }
-
-    const translateNewCaption = async () => {
-      const lastCaption = captions[captions.length - 1];
-
-      // Check if we already have a translation for this caption
-      if (translatedCaptions.has(lastCaption.id)) {
-        return;
-      }
-
-      try {
-        const translated = await translatorRef.current!.translate(
-          lastCaption.text
-        );
-        setTranslatedCaptions((prev) => {
-          const newMap = new Map(prev);
-          newMap.set(lastCaption.id, translated);
-          return newMap;
-        });
-      } catch (error) {
-        console.error("Error translating new caption:", error);
-      }
+    const load = async () => {
+      const { data } = await supabase
+        .from("translations")
+        .select("caption_id, translated_text")
+        .eq("event_id", event.id)
+        .eq("language_code", targetLanguage)
+        .order("caption_id", { ascending: true });
+      const map = new Map<string, string>();
+      (data || []).forEach((r: any) =>
+        map.set(r.caption_id, r.translated_text)
+      );
+      setTranslatedCaptions(map);
     };
+    load();
+    const channel = supabase
+      .channel(`translations:${event.id}:${targetLanguage}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "translations",
+          filter: `event_id=eq.${event.id}`,
+        },
+        (payload: {
+          new: {
+            caption_id: string;
+            language_code: string;
+            translated_text: string;
+          };
+        }) => {
+          if (payload.new.language_code !== targetLanguage) return;
+          setTranslatedCaptions((prev) => {
+            const next = new Map(prev);
+            next.set(payload.new.caption_id, payload.new.translated_text);
+            return next;
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [event.id, supabase, targetLanguage, eventLanguages]);
 
-    translateNewCaption();
-  }, [captions, targetLanguage, translatedCaptions]);
-
-  // Translate partial text with debouncing
-  useEffect(() => {
-    if (!translatorRef.current || targetLanguage === "none" || !partialText) {
-      setTranslatedPartialText("");
-      return;
-    }
-
-    const timeoutId = setTimeout(async () => {
-      try {
-        const translated = await translatorRef.current!.translate(partialText);
-        setTranslatedPartialText(translated);
-      } catch (error) {
-        console.error("Error translating partial text:", error);
-        setTranslatedPartialText("");
-      }
-    }, 500); // Debounce for 500ms
-
-    return () => clearTimeout(timeoutId);
-  }, [partialText, targetLanguage]);
+  // Client-side translator removed; translations are provided via Supabase realtime
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -381,67 +319,73 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
             </div>
           </div>
 
-          {/* Language Selector */}
-          {isTranslatorSupported && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Languages className="h-4 w-4" />
-                  <span>Translation:</span>
-                </div>
-                <div className="w-[250px]">
-                  <LanguageSelector
-                    value={targetLanguage}
-                    onValueChange={(code) => setTargetLanguage(code || "none")}
-                    disabled={isTranslating}
-                    defaultOption={{
-                      value: "none",
-                      label: "Original (No Translation)",
-                    }}
-                  />
-                </div>
-                {isTranslating && (
-                  <Badge variant="outline" className="gap-1.5">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    {downloadProgress !== null
-                      ? `Downloading model ${downloadProgress}%`
-                      : "Translating..."}
-                  </Badge>
-                )}
+          <div className="mt-4 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Languages className="h-4 w-4" />
+                <span>Translation:</span>
               </div>
-              {sourceLanguage && sourceLanguage !== "en" && (
-                <div className="text-xs text-muted-foreground ml-6">
-                  Detected source language: {sourceLanguage.toUpperCase()}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Translation Error */}
-          {translationError && (
-            <Alert variant="destructive" className="mt-4">
-              <AlertDescription>{translationError}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* Browser Not Supported Message */}
-          {!isTranslatorSupported && (
-            <Alert className="mt-4">
-              <AlertDescription>
-                Translation is not available in your browser. Please use Chrome
-                138+ with the built-in AI features enabled to access live
-                translation.{" "}
-                <a
-                  href="https://developer.chrome.com/docs/ai/translator-api"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline font-medium"
+              <div className="w-full sm:w-[250px]">
+                <Select
+                  value={targetLanguage}
+                  onValueChange={(v) => setTargetLanguage(v || "none")}
                 >
-                  Learn more
-                </a>
-              </AlertDescription>
-            </Alert>
-          )}
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      Original (No Translation)
+                    </SelectItem>
+                    {eventLanguages
+                      .filter((l) => l.is_active)
+                      .map((l) => (
+                        <SelectItem
+                          key={l.language_code}
+                          value={l.language_code}
+                        >
+                          {LANGUAGES.find((x) => x.code === l.language_code)
+                            ?.name || l.language_code}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={viewMode === "original" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("original")}
+                >
+                  Original
+                </Button>
+                <Button
+                  variant={viewMode === "translation" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("translation")}
+                >
+                  Translation
+                </Button>
+                <Button
+                  variant={viewMode === "both" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("both")}
+                >
+                  Both
+                </Button>
+              </div>
+            </div>
+            {inactiveNotice && targetLanguage !== "none" && (
+              <Alert>
+                <AlertDescription>
+                  Official translation for {targetLanguage.toUpperCase()} is not
+                  active.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+
+          {/* Translation error and browser support UI removed */}
         </CardHeader>
       </Card>
 
@@ -495,11 +439,10 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
                   minute: "2-digit",
                   second: "2-digit",
                 });
-                const displayText =
-                  targetLanguage !== "none" &&
-                  translatedCaptions.has(caption.id)
-                    ? translatedCaptions.get(caption.id)!
-                    : caption.text;
+                const translatedText =
+                  targetLanguage !== "none"
+                    ? translatedCaptions.get(caption.id) || ""
+                    : "";
 
                 return (
                   <div
@@ -514,13 +457,36 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
                           className="text-xs px-1.5 py-0"
                         >
                           <Languages className="h-2.5 w-2.5 mr-1" />
-                          {LANGUAGES.find(
-                            (l) => l.code === targetLanguage
-                          )?.code.toUpperCase()}
+                          {targetLanguage.toUpperCase()}
                         </Badge>
                       )}
                     </div>
-                    <div className="text-lg leading-relaxed">{displayText}</div>
+                    {viewMode === "original" && (
+                      <div className="text-lg leading-relaxed">
+                        {caption.text}
+                      </div>
+                    )}
+                    {viewMode === "translation" &&
+                      targetLanguage !== "none" && (
+                        <div className="text-lg leading-relaxed">
+                          {translatedText || ""}
+                        </div>
+                      )}
+                    {viewMode === "both" && targetLanguage !== "none" && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="text-lg leading-relaxed">
+                          {caption.text}
+                        </div>
+                        <div className="text-lg leading-relaxed">
+                          {translatedText || ""}
+                        </div>
+                      </div>
+                    )}
+                    {viewMode === "both" && targetLanguage === "none" && (
+                      <div className="text-lg leading-relaxed">
+                        {caption.text}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -534,16 +500,12 @@ export function ViewerInterface({ event }: ViewerInterfaceProps) {
                         className="text-xs px-1.5 py-0"
                       >
                         <Languages className="h-2.5 w-2.5 mr-1" />
-                        {LANGUAGES.find(
-                          (l) => l.code === targetLanguage
-                        )?.code.toUpperCase()}
+                        {targetLanguage.toUpperCase()}
                       </Badge>
                     )}
                   </div>
                   <div className="text-lg leading-relaxed italic text-primary/70">
-                    {targetLanguage !== "none" && translatedPartialText
-                      ? translatedPartialText
-                      : partialText}
+                    {partialText}
                   </div>
                 </div>
               )}

@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LanguageSelector } from "@/components/language-selector";
+import { Switch } from "@/components/ui/switch";
+import { LANGUAGES } from "@/lib/languages";
 
 interface Event {
   id: string;
@@ -109,6 +111,12 @@ export function BroadcasterInterface({
   const sequenceNumberRef = useRef(0);
   const supabase = getSupabaseBrowserClient();
   const broadcastChannelRef = useRef<any>(null);
+  const translationIntervalRef = useRef<NodeJS.Timer | null>(null);
+  const [eventTranslations, setEventTranslations] = useState<
+    { id: string; language_code: string; is_active: boolean }[]
+  >([]);
+  const [addLanguageCode, setAddLanguageCode] = useState<string | null>(null);
+  const runTickRef = useRef<() => Promise<void>>(async () => {});
 
   // Language detection state
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
@@ -399,6 +407,8 @@ export function BroadcasterInterface({
             if (exists) return prev;
             return [...prev, payload.new];
           });
+          // Trigger immediate translation run on new finalized caption
+          runTickRef.current();
         }
       )
       .subscribe();
@@ -423,6 +433,110 @@ export function BroadcasterInterface({
       broadcastChannelRef.current = null;
     };
   }, [event.uid, supabase]);
+
+  // Load and subscribe event translations
+  useEffect(() => {
+    const loadEventTranslations = async () => {
+      const { data } = await supabase
+        .from("event_translations")
+        .select("id, language_code, is_active")
+        .eq("event_id", event.id);
+      setEventTranslations(data || []);
+    };
+    loadEventTranslations();
+    const channel = supabase
+      .channel(`event_translations:${event.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "event_translations",
+          filter: `event_id=eq.${event.id}`,
+        },
+        () => {
+          loadEventTranslations();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [event.id, supabase]);
+
+  // Prepare translation tick runner
+  useEffect(() => {
+    runTickRef.current = async () => {
+      const active = eventTranslations.filter((t) => t.is_active);
+      if (!isRecording || active.length === 0) return;
+      for (const t of active) {
+        try {
+          await fetch("/api/translations/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventUid: event.uid,
+              languageCode: t.language_code,
+              partialText,
+            }),
+          });
+        } catch (e) {
+          console.error("Translation tick error", e);
+        }
+      }
+    };
+  }, [event.uid, isRecording, eventTranslations, partialText]);
+
+  // Background translation worker
+  useEffect(() => {
+    const active = eventTranslations.filter((t) => t.is_active);
+    if (!isRecording || active.length === 0) {
+      if (translationIntervalRef.current) {
+        clearInterval(translationIntervalRef.current as any);
+        translationIntervalRef.current = null;
+      }
+      return;
+    }
+    if (!translationIntervalRef.current) {
+      translationIntervalRef.current = setInterval(async () => {
+        await runTickRef.current();
+      }, 5000);
+    }
+    return () => {
+      if (translationIntervalRef.current) {
+        clearInterval(translationIntervalRef.current as any);
+        translationIntervalRef.current = null;
+      }
+    };
+  }, [event.uid, isRecording, eventTranslations]);
+
+  const addLanguage = async () => {
+    if (!addLanguageCode) return;
+    const exists = eventTranslations.some(
+      (t) => t.language_code === addLanguageCode
+    );
+    if (exists) return;
+    const { error } = await supabase.from("event_translations").insert({
+      event_id: event.id,
+      language_code: addLanguageCode,
+      is_active: false,
+    });
+    if (error) {
+      console.error("Error adding language", error);
+    } else {
+      setAddLanguageCode(null);
+    }
+  };
+
+  const toggleLanguage = async (rowId: string, next: boolean) => {
+    const { error } = await supabase
+      .from("event_translations")
+      .update({ is_active: next })
+      .eq("id", rowId);
+    if (error) {
+      console.error("Error toggling language", error);
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -580,6 +694,73 @@ export function BroadcasterInterface({
                 )}
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Translations Control */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Translations</CardTitle>
+          <CardDescription>
+            Manage target languages and toggle translation on/off
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Select
+                value={addLanguageCode ?? ""}
+                onValueChange={setAddLanguageCode}
+              >
+                <SelectTrigger className="w-[250px]">
+                  <SelectValue placeholder="Add a language" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.map((l) => (
+                    <SelectItem key={l.code} value={l.code}>
+                      {l.name} ({l.code})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                onClick={addLanguage}
+                disabled={!addLanguageCode}
+              >
+                Add
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {eventTranslations.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No target languages added
+                </p>
+              ) : (
+                eventTranslations.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between p-3 border rounded"
+                  >
+                    <div className="font-medium">
+                      {LANGUAGES.find((l) => l.code === t.language_code)
+                        ?.name || t.language_code}{" "}
+                      ({t.language_code})
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        {t.is_active ? "On" : "Off"}
+                      </span>
+                      <Switch
+                        checked={t.is_active}
+                        onCheckedChange={(v) => toggleLanguage(t.id, v)}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
