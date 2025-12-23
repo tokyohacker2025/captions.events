@@ -1,43 +1,57 @@
 ## Goal
-Push the current local changes to your GitHub repository at `git@github.com:tokyohacker2025/captions.events.git`.
+Create a single markdown document visible in Trae’s Documents panel that explains how to deploy this project to Vercel, including environment variables, Supabase/GitHub OAuth setup, database migrations, and a testing checklist.
 
-## Steps
+## File Location
+- Create `VERCEL_DEPLOYMENT.md` in the repository root so it appears in Trae’s Documents section.
 
-### 1) Keep upstream and add your origin
-- Rename existing remote:
-  - `git remote rename origin upstream`
-- Add your repo as the new origin (SSH recommended):
-  - `git remote add origin git@github.com:tokyohacker2025/captions.events.git`
-- Verify:
-  - `git remote -v` (should show `origin` → your repo, `upstream` → elevenlabs)
+## Document Structure
+### Overview
+- What the app does and that it is Vercel-ready.
 
-### 2) Ensure you won’t commit local tool folders
-- `.env*` is already ignored by `.gitignore` (line 20), so secrets won’t be committed.
-- If you don’t want `.trae/` committed, add it to `.gitignore`:
-  - `echo ".trae" >> .gitignore`
+### Prerequisites
+- Vercel account
+- Supabase project (production)
+- GitHub OAuth app (production)
+- API keys: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`
 
-### 3) Stage files for commit
-- Stage tracked modifications:
-  - `git add components/broadcaster-interface.tsx components/viewer-interface.tsx`
-- Stage new files/directories:
-  - `git add app/api/translations supabase/migrations/20251217090000_event_translations.sql supabase/migrations/20251217090500_translations.sql`
-- Check status:
-  - `git status`
+### Vercel Configuration
+- Import repo
+- Framework: Next.js
+- Environment variables:
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `NEXT_PUBLIC_SITE_URL`
+  - `ELEVENLABS_API_KEY`
+  - `OPENAI_API_KEY`
+- Redeploy after setting variables
 
-### 4) Commit with a clear message
-- `git commit -m "feat: server-side translations, realtime syncing, UI fixes; add migrations and API route"`
+### Supabase (Production)
+- Set Authentication → URL Configuration → Site URL to production domain
+- Providers → GitHub: enable and set Client ID/Secret
+- GitHub OAuth callback: `https://<your-project-ref>.supabase.co/auth/v1/callback`
+- Apply DB migrations (copy/paste SQL):
+  - `supabase/migrations/20251217090000_event_translations.sql`
+  - `supabase/migrations/20251217090500_translations.sql`
+- Confirm `supabase_realtime` publication includes `captions`, `event_translations`, `translations`
 
-### 5) Push to your origin
-- Set upstream and push:
-  - `git push -u origin main`
-- If the branch doesn’t exist remotely yet, this will create it.
+### App Behavior Notes
+- Middleware protects `/dashboard` and `/broadcast/*`
+- Viewer reads translations via Supabase Realtime
+- Host triggers batch translation via `/api/translations/run` using `OPENAI_API_KEY`
 
-### 6) Optional: Keep upstream for future pulls
-- To sync changes from the original repo later:
-  - `git fetch upstream`
-  - `git merge upstream/main` (or `git rebase upstream/main`)
+### Testing Checklist
+- Sign in with GitHub
+- Create event, start broadcasting
+- Toggle translations ON; confirm translated rows arrive and stream to viewer
+- Turn translations OFF; viewer shows inactive notice
 
-### 7) Confirm on GitHub
-- Open your repo page and confirm the new commit appears on `main`.
+### Troubleshooting
+- 401 on API routes: check auth and cookies
+- 500 on OpenAI: verify `OPENAI_API_KEY`
+- RLS errors: confirm policies applied in production
+- Redirect issues: check `NEXT_PUBLIC_SITE_URL` and Supabase Site URL
 
-If you want, I can produce the exact commands in one block you can paste into your terminal.
+### Security
+- Never commit secrets; set in Vercel environment variables only.
+
+If approved, I will add `VERCEL_DEPLOYMENT.md` to the repo root with this content.
